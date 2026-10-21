@@ -10,6 +10,50 @@ import pickle
 import pygad
 import threading
 import kivy.base
+import time
+import csv
+import sys
+import argparse
+import datetime
+
+# ===================================================================
+# COMP6009 Lab 2 - Experiment configuration
+# ===================================================================
+# Run the BASELINE (original settings, broken fitness):
+#     python main_improved.py --mode baseline --level 1 --runs 5
+# Run the IMPROVED algorithm:
+#     python main_improved.py --mode improved --level 1 --runs 5
+# Play manually (no auto-restart):
+#     python main_improved.py --mode improved
+# Results are appended to results.csv
+# ===================================================================
+
+parser = argparse.ArgumentParser(description="CoinTex GA agent")
+parser.add_argument("--mode", choices=["baseline", "improved"], default="improved",
+                    help="which GA configuration to use")
+parser.add_argument("--level", type=int, default=0,
+                    help="level to auto-play (0 = manual level select)")
+parser.add_argument("--runs", type=int, default=1,
+                    help="how many times to repeat the level automatically")
+parser.add_argument("--log", default="results.csv", help="CSV file for KPI logging")
+ARGS, _ = parser.parse_known_args()
+
+MODE = ARGS.mode
+AUTO_LEVEL = ARGS.level
+RUNS_REMAINING = ARGS.runs
+LOG_FILE = ARGS.log
+RUN_INDEX = 0
+
+# --- Improved fitness weights (tune these for your experiments) -----
+COIN_WEIGHT = 1.0        # strength of attraction to the nearest coin
+EPSILON = 0.02           # avoids division by zero when sitting on a coin
+MONSTER_PENALTY = 6.0    # how strongly to avoid monsters
+MONSTER_RADIUS = 0.30    # Manhattan distance considered "dangerous"
+FIRE_PENALTY = 8.0       # fires are stationary and deadly -> heavier
+FIRE_RADIUS = 0.25
+BOUNDS_PENALTY = 50.0    # discourage targets outside the visible board
+MOVE_INTERVAL = 0.25     # seconds between issued moves (= char_anim_duration)
+
 
 class CollectCoinThread(threading.Thread):
 
@@ -18,100 +62,132 @@ class CollectCoinThread(threading.Thread):
         self.screen = screen
 
     def run(self):
-        ga_instance = pygad.GA(num_generations=10000,
-                               num_parents_mating=2,
-                               fitness_func=fitness_func,
-                               parent_selection_type ="random",
-                               sol_per_pop=10,
-                               num_genes=2,
-                               init_range_low=0.3,
-                               init_range_high=1.3,
-                               random_mutation_min_val=1.0,
-                               random_mutation_max_val=10.0,
-                               mutation_by_replacement=True,
-                               mutation_type="swap",
-                               mutation_percent_genes=10,
-                               on_generation=callback_generation)
+        if MODE == "baseline":
+            # ---- ORIGINAL settings, kept verbatim for comparison ----
+            ga_instance = pygad.GA(num_generations=10000,
+                                   num_parents_mating=2,
+                                   fitness_func=fitness_func,
+                                   parent_selection_type="random",
+                                   sol_per_pop=10,
+                                   num_genes=2,
+                                   init_range_low=0.3,
+                                   init_range_high=1.3,
+                                   random_mutation_min_val=1.0,
+                                   random_mutation_max_val=10.0,
+                                   mutation_by_replacement=True,
+                                   mutation_type="swap",
+                                   mutation_percent_genes=10,
+                                   on_generation=callback_generation)
+        else:
+            # ---- IMPROVED settings ----
+            # tournament selection    -> real selection pressure (was: random)
+            # random mutation         -> can actually explore (was: swap, which
+            #                            only swapped x and y on a 2-gene chromosome)
+            # gene_space 0..1         -> targets always on-screen (was: 0.3..1.3)
+            # uniform crossover       -> better gene mixing for 2 genes
+            # keep_parents=0          -> every solution re-scored each generation,
+            #                            essential because coins/monsters move
+            ga_instance = pygad.GA(num_generations=100000,
+                                   num_parents_mating=8,
+                                   fitness_func=fitness_func,
+                                   parent_selection_type="tournament",
+                                   K_tournament=3,
+                                   sol_per_pop=20,
+                                   num_genes=2,
+                                   gene_space={"low": 0.0, "high": 1.0},
+                                   crossover_type="uniform",
+                                   mutation_type="random",
+                                   mutation_probability=0.3,
+                                   random_mutation_min_val=-0.15,
+                                   random_mutation_max_val=0.15,
+                                   mutation_by_replacement=False,
+                                   keep_parents=0,
+                                   keep_elitism=0,
+                                   on_generation=callback_generation)
 
         ga_instance.run()
 
 
 
 def fitness_func(ga_instance, solution, solution_idx):
+    """Score a candidate target position (solution[0], solution[1]).
+
+    Improved fitness = coin attraction - hazard penalties - out-of-bounds penalty
+
+    In BASELINE mode the hazard terms are switched off, reproducing the
+    original behaviour where the monster/fire penalties were written as
+    "output -= 0" and therefore had no effect at all.
+    """
     curr_screen = app.root.screens[lvl_num]
 
     coins = curr_screen.coins_ids
-    if len(coins.items()) == 0: # "len(coins.items())" is the number of coins in the current state
+    if len(coins) == 0:
         return 0
 
-    for k in range(len(coins.items())):
+    # ---------- 1. Attraction to the nearest remaining coin ----------
+    min_dist = 1000.0
+    for curr_coin in list(coins.values()):
         try:
-            curr_coin = coins[list(coins.keys())[k]]
-            curr_coin_center = [curr_coin.pos_hint['x'], curr_coin.pos_hint['y']]
+            coin_x = curr_coin.pos_hint['x']
+            coin_y = curr_coin.pos_hint['y']
+            dist = abs(solution[0] - coin_x) + abs(solution[1] - coin_y)
+            if dist < min_dist:
+                min_dist = dist
+        except (KeyError, AttributeError):
+            continue
 
-        except IndexError:
-            pass
-        continue
-
-    output=1000 # output indicate the distance between a chromosome to the closest coin
-    tem=1
-
-    for k in range(len(coins.items())):
+    if MODE == "baseline":
+        # original formulation: 1/distance, with no epsilon guard
         try:
-            curr_coin = coins[list(coins.keys())[k]]
-            curr_coin_center = [curr_coin.pos_hint['x'], curr_coin.pos_hint['y']]
-            # curr_coin_center is the center of k-th coin
-            tem = abs(solution[0] - curr_coin_center[0]) + abs(solution[1] - curr_coin_center[1])
-            # solution is the position of a chromosome in the GA
-            if (tem<output):
-                output=tem
+            fitness = 1.0 / min_dist
+        except ZeroDivisionError:
+            fitness = 1000.0
+    else:
+        # epsilon guard prevents a divide-by-zero spike when a chromosome
+        # lands exactly on a coin
+        fitness = COIN_WEIGHT / (min_dist + EPSILON)
 
-        except IndexError:
-            pass
-        continue
+    if MODE == "baseline":
+        # The original code computed monster/fire distances and then applied
+        # "output -= 0" / "output += 0", i.e. no penalty whatsoever.
+        # Reproduced here as a no-op so the baseline is a fair comparison.
+        return fitness
 
-
-
-    output = 1.0 / output
-    # since the fitness is the larger the better and output is the distance, we need to inverse output to make the fitness the larger the better
-
-    monsters_pos = []
-    # "monsters_pos" indicates the positions of all monsters
+    # ---------- 2. Penalty for being near a monster ----------
     for i in range(curr_screen.num_monsters):
-        monster_image = curr_screen.ids['monster'+str(i+1)+'_image_lvl'+str(lvl_num)]
-        monsters_pos.append([monster_image.pos_hint['x'], monster_image.pos_hint['y']])
+        try:
+            monster_image = curr_screen.ids['monster' + str(i + 1) + '_image_lvl' + str(lvl_num)]
+            mx = monster_image.pos_hint['x']
+            my = monster_image.pos_hint['y']
+        except (KeyError, AttributeError):
+            continue
 
-    for monst_pos in monsters_pos:
-        # the following calculate the position of a chromosome to each monster (the monst_pos-th monster)
-        char_monst_h_distance = abs(solution[0] - monst_pos[0])
-        char_monst_v_distance = abs(solution[1] - monst_pos[1])
-        # the following penalize the GA chromosome which is too close to the monster
-        if char_monst_h_distance <= 0.2 and char_monst_v_distance <= 0.5:
-            output -= 0
+        d = abs(solution[0] - mx) + abs(solution[1] - my)
+        if d < MONSTER_RADIUS:
+            # graded penalty: strongest when the target sits on the monster,
+            # fading to zero at the edge of the danger radius. A graded term
+            # gives the GA a usable gradient; a hard cut-off would not.
+            fitness -= MONSTER_PENALTY * (MONSTER_RADIUS - d) / MONSTER_RADIUS
 
-        else:
-
-            output += 0
-
-    fires_pos = []
-    # "fires_pos" indicates the positions of all fires
+    # ---------- 3. Penalty for being near a fire ----------
     for i in range(curr_screen.num_fires):
-        fire_image = curr_screen.ids['fire'+str(i+1)+'_lvl'+str(lvl_num)]
-        fires_pos.append([fire_image.pos_hint['x'], fire_image.pos_hint['y']])
+        try:
+            fire_image = curr_screen.ids['fire' + str(i + 1) + '_lvl' + str(lvl_num)]
+            fx = fire_image.pos_hint['x']
+            fy = fire_image.pos_hint['y']
+        except (KeyError, AttributeError):
+            continue
 
-    for fire_pos in fires_pos:
-        # the following calculate the position of a chromosome to each fire (the fire_pos-th fire)
-        char_fire_h_distance = abs(solution[0] - fire_pos[0])
-        char_fire_v_distance = abs(solution[1] - fire_pos[1])
-        # the following penalize the GA chromosome which is too close to the fire
-        if char_fire_h_distance <= 0.2 and char_fire_v_distance <= 0.5:
-            output -= 0
+        d = abs(solution[0] - fx) + abs(solution[1] - fy)
+        if d < FIRE_RADIUS:
+            fitness -= FIRE_PENALTY * (FIRE_RADIUS - d) / FIRE_RADIUS
 
-        else:
-
-            output += 0
-
-    fitness = output
+    # ---------- 4. Penalty for leaving the visible board ----------
+    for gene in (solution[0], solution[1]):
+        if gene < 0.0:
+            fitness -= BOUNDS_PENALTY * abs(gene)
+        elif gene > 1.0:
+            fitness -= BOUNDS_PENALTY * (gene - 1.0)
 
     return fitness
 
@@ -119,25 +195,54 @@ def fitness_func(ga_instance, solution, solution_idx):
 
 
 last_fitness = 0
+last_move_time = 0.0
+
 def callback_generation(ga_instance):
-    global last_fitness
+    global last_fitness, last_move_time
 
-
-    max_index=max(range(len(ga_instance.last_generation_fitness[1:])), key=ga_instance.last_generation_fitness[1:].__getitem__)
-
-    best_sol_fitness = ga_instance.last_generation_fitness[max_index+1]
-    fitness_change = best_sol_fitness - last_fitness
     curr_screen = app.root.screens[lvl_num]
-
-    last_fitness = best_sol_fitness
-
     coins = curr_screen.coins_ids
 
-    if len(coins.items()) == 0 or curr_screen.character_killed:
+    # Stop conditions: level cleared, or the character died.
+    if len(coins) == 0 or curr_screen.character_killed:
         return "stop"
-    elif len(coins.items()) != 0 and fitness_change != 0:
-        best_sol = ga_instance.population[max_index+1]
-        app.start_char_animation(lvl_num, [float(best_sol[0]),  float(best_sol[1])])
+
+    fitness_values = ga_instance.last_generation_fitness
+
+    if MODE == "baseline":
+        # ---- ORIGINAL logic, bugs included, for comparison ----
+        # Note the [1:] slice: individual 0 can never be selected (off-by-one).
+        max_index = max(range(len(fitness_values[1:])),
+                        key=fitness_values[1:].__getitem__)
+        best_sol_fitness = fitness_values[max_index + 1]
+        fitness_change = best_sol_fitness - last_fitness
+        last_fitness = best_sol_fitness
+        if fitness_change != 0:
+            best_sol = ga_instance.population[max_index + 1]
+            app.start_char_animation(lvl_num, [float(best_sol[0]), float(best_sol[1])])
+        return
+
+    # ---- IMPROVED logic ----
+    # Fix 1: search the whole population, not population[1:].
+    max_index = max(range(len(fitness_values)), key=fitness_values.__getitem__)
+    best_sol = ga_instance.population[max_index]
+    last_fitness = fitness_values[max_index]
+
+    # Fix 2: throttle. The GA completes thousands of generations per second,
+    # but a move takes char_anim_duration (0.25 s). Without this gate every
+    # generation cancels the previous animation and the character barely moves.
+    # Issuing one move per animation period lets each move actually finish.
+    now = time.time()
+    if now - last_move_time < MOVE_INTERVAL:
+        time.sleep(0.005)   # yield to the Kivy UI thread
+        return
+    last_move_time = now
+
+    # Fix 3: clamp to the visible board before moving.
+    target_x = min(max(float(best_sol[0]), 0.0), 1.0)
+    target_y = min(max(float(best_sol[1]), 0.0), 1.0)
+
+    app.start_char_animation(lvl_num, [target_x, target_y])
 
 
 class CointexApp(kivy.app.App):
@@ -230,12 +335,59 @@ class CointexApp(kivy.app.App):
             fire_widget = curr_screen.ids['fire'+str(i+1)+'_lvl'+str(screen_num)]
             self.start_fire_animation(fire_widget=fire_widget, pos=(0.0, 0.5), anim_duration=5.0)
 
-        global lvl_num
+        global lvl_num, last_fitness, last_move_time, RUN_INDEX
 
         lvl_num = screen_num
+        last_fitness = 0
+        last_move_time = 0.0
+        RUN_INDEX += 1
+
+        # KPI: start the clock for this run
+        curr_screen.run_start_time = time.time()
+        curr_screen.result_logged = False
 
         collectCoinThread = CollectCoinThread(screen=curr_screen)
         collectCoinThread.start()
+
+    def log_result(self, screen_num, outcome):
+        """Append one row of KPI data to the results CSV."""
+        curr_screen = self.root.screens[screen_num]
+
+        if getattr(curr_screen, "result_logged", False):
+            return
+        curr_screen.result_logged = True
+
+        elapsed = round(time.time() - getattr(curr_screen, "run_start_time", time.time()), 2)
+        collisions = curr_screen.num_collisions_hit
+        max_collisions = curr_screen.num_collisions_level
+        life_remaining = round(100.0 * (1 - collisions / float(max_collisions)), 1)
+
+        row = {
+            "timestamp": datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+            "mode": MODE,
+            "level": screen_num,
+            "run": RUN_INDEX,
+            "outcome": outcome,
+            "coins_collected": curr_screen.num_coins_collected,
+            "coins_total": curr_screen.num_coins,
+            "time_seconds": elapsed,
+            "collisions": collisions,
+            "life_remaining_pct": life_remaining,
+        }
+
+        write_header = not os.path.exists(LOG_FILE)
+        try:
+            with open(LOG_FILE, "a", newline="") as f:
+                writer = csv.DictWriter(f, fieldnames=list(row.keys()))
+                if write_header:
+                    writer.writeheader()
+                writer.writerow(row)
+        except Exception as e:
+            print("[KPI] could not write log:", e)
+
+        print("[KPI] {mode} | level {level} | run {run} | {outcome} | "
+              "coins {coins_collected}/{coins_total} | {time_seconds}s | "
+              "life {life_remaining_pct}%".format(**row))
 
     def start_monst_animation(self, monster_image, new_pos, anim_duration):
         monst_anim = kivy.animation.Animation(pos_hint={'x': new_pos[0], 'y': new_pos[1]}, im_num=monster_image.end_im_num, duration=anim_duration)
@@ -270,6 +422,7 @@ class CointexApp(kivy.app.App):
             remaining_life_percent_lvl_widget.size_hint =  (remaining_life_size_hint_x-remaining_life_size_hint_x*life_percent, remaining_life_percent_lvl_widget.size_hint[1])
 
             if curr_screen.num_collisions_hit == curr_screen.num_collisions_level:
+                self.log_result(screen_num, "LOSS")
                 self.bg_music.stop()
                 self.char_death_sound.play()
                 curr_screen.character_killed = True
@@ -324,6 +477,7 @@ class CointexApp(kivy.app.App):
                 curr_screen.num_coins_collected = curr_screen.num_coins_collected + 1
                 curr_screen.ids['num_coins_collected_lvl'+str(screen_num)].text = "Coins "+str(curr_screen.num_coins_collected)+"/"+str(curr_screen.num_coins)
                 if curr_screen.num_coins_collected == curr_screen.num_coins:
+                    self.log_result(screen_num, "WIN")
                     self.bg_music.stop()
                     self.level_completed_sound.play()
                     kivy.clock.Clock.schedule_once(functools.partial(self.back_to_main_screen, curr_screen.parent), 3)
@@ -374,6 +528,7 @@ class CointexApp(kivy.app.App):
             remaining_life_percent_lvl_widget.size_hint =  (remaining_life_size_hint_x-remaining_life_size_hint_x*life_percent, remaining_life_percent_lvl_widget.size_hint[1])
 
             if curr_screen.num_collisions_hit == curr_screen.num_collisions_level:
+                self.log_result(screen_num, "LOSS")
                 self.bg_music.stop()
                 self.char_death_sound.play()
                 curr_screen.character_killed = True
@@ -392,6 +547,17 @@ class CointexApp(kivy.app.App):
 
     def main_screen_on_enter(self):
         self.main_bg_music.play()
+
+        # Batch experiment mode: automatically replay the configured level
+        # until the requested number of runs has been completed.
+        global RUNS_REMAINING
+        if AUTO_LEVEL > 0 and RUNS_REMAINING > 0:
+            RUNS_REMAINING -= 1
+            kivy.clock.Clock.schedule_once(
+                lambda dt: setattr(self.root, "current", "level" + str(AUTO_LEVEL)), 1.5)
+        elif AUTO_LEVEL > 0 and RUNS_REMAINING <= 0:
+            print("\n[KPI] All runs complete. Results saved to: " + LOG_FILE + "\n")
+            kivy.clock.Clock.schedule_once(lambda dt: self.stop(), 1.0)
 
     def main_screen_on_leave(self):
         self.main_bg_music.stop()
