@@ -2,10 +2,6 @@
 
 **Colombo-group-08:** Pavithra Solomons (24079123), Ravindu Chandrasekara (24100201), Rashmika Dilshan (20543909)
 
-Author: Pavithra Solomons  
-Last modified by: Pavithra Solomons  
-Last modified: 29 October 2026
-
 This folder has our work for Part A of the COMP6009 final assignment. We built a new danger-aware A* agent for CoinTex and compared it with the original greedy agent and the CoinTex genetic algorithm (GA) on all 24 levels.
 
 ## Contents

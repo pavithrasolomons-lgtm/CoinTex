@@ -2,10 +2,6 @@
 
 **Colombo-group-08:** Pavithra Solomons (24079123), Ravindu Chandrasekara (24100201), Rashmika Dilshan (20543909)
 
-Author: Pavithra Solomons  
-Last modified by: Pavithra Solomons  
-Last modified: 29 October 2026
-
 This folder has only the code we wrote for Part A. The CoinTex game files (cointex.kv, images and music) and main_work_greedy.py are not included, as they come from the CoinTex repository and Blackboard.
 
 Results (CSV files and charts): https://github.com/pavithrasolomons-lgtm/CoinTex/tree/master/COMP6009_Final-Assignment-PartA/results

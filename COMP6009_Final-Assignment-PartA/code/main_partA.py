@@ -1,9 +1,6 @@
 """
 main_partA.py
 =============
-Author:           Pavithra Solomons
-Last modified by: Pavithra Solomons
-Last modified:    29 October 2026
 Group:            Colombo-group-08, COMP6009 Final Assignment Part A
 Based on:         game code in main_work_greedy.py and CoinTex by Ahmed Fawzy Gad
 

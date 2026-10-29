@@ -2,10 +2,6 @@
 
 **Colombo-group-08:** Pavithra Solomons (24079123), Ravindu Chandrasekara (24100201), Rashmika Dilshan (20543909)
 
-Author: Pavithra Solomons  
-Last modified by: Pavithra Solomons  
-Last modified: 29 October 2026
-
 These are the results behind Part 3 of our report. All three agents played the real CoinTex game: the original greedy agent, the CoinTex tutorial GA and our danger-aware A* agent. Each played 24 levels with 5 runs per level, so 360 games in total, with a 60 second limit per game. The code is in the [code](../code) folder and the report and slides are in the [main folder](..).
 
 ## Files

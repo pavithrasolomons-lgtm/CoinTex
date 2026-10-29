@@ -1,9 +1,6 @@
 @echo off
 REM ======================================================================
 REM  COMP6009 Final Assignment Part A - run all experiments
-REM  Author:           Pavithra Solomons
-REM  Last modified by: Pavithra Solomons
-REM  Last modified:    29 October 2026
 REM  Group:            Colombo-group-08
 REM  greedy, A* and GA agents x levels 1-24 x 5 runs  (about 60-75 min)
 REM  Results: partA_results.csv, partA_summary.csv, partA_per_level.csv,

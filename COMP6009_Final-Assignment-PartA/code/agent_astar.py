@@ -1,9 +1,6 @@
 """
 agent_astar.py
 ==============
-Author:           Pavithra Solomons
-Last modified by: Pavithra Solomons
-Last modified:    29 October 2026
 Group:            Colombo-group-08, COMP6009 Final Assignment Part A
 
 Danger-aware A* agent for CoinTex (COMP6009 Final Assignment, Part A).
